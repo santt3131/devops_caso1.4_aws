@@ -1,0 +1,217 @@
+pipeline {
+    agent none // Deshabilita el agente global para forzar la separación por etapas
+
+    stages {
+        stage('Get Code') {
+            agent any // Se ejecuta en el nodo master por defecto
+            steps {
+                // Registro de diagnóstico de entorno
+                sh '''
+                    echo "=============================="
+                    echo "Etapa: Get Code"
+                    echo "Nombre del Nodo en Jenkins: $NODE_NAME"
+                    echo "Usuario: $(whoami)"
+                    echo "Host: $(hostname)"
+                    echo "=============================="
+                '''
+                
+                // Descarga el código de la rama develop
+                checkout([$class: 'GitSCM', 
+                    branches: [[name: '*/develop']], 
+                    extensions: [], 
+                    userRemoteConfigs: [[url: 'https://github.com/santt3131/devops_caso1.4_aws.git']]
+                ])
+                
+                // Guardamos el código en el baúl temporal de Jenkins
+                stash name: 'codigo-fuente', includes: '**/*'
+            }
+        }
+
+        stage('Static Test') {
+            agent { label 'static-analysis-agent' } // Agente exclusivo para pruebas estáticas
+            steps {
+                // Traemos el código al espacio de trabajo de este agente
+                unstash 'codigo-fuente'
+                
+                // Registro de diagnóstico de entorno
+                sh '''
+                    echo "=============================="
+                    echo "Etapa: Static Test"
+                    echo "Nombre del Nodo en Jenkins: $NODE_NAME"
+                    echo "Usuario: $(whoami)"
+                    echo "Host: $(hostname)"
+                    echo "=============================="
+                '''
+
+                echo 'Iniciando Análisis Estático en Agente Dedicado...'
+                sh 'flake8 --format=pylint --exit-zero src > flake8.out'
+                sh 'bandit --exit-zero -r src -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"'
+                
+                recordIssues tools: [flake8(name: 'Flake8', pattern: 'flake8.out')],
+                    qualityGates: [
+                        [threshold: 8, type: 'TOTAL', unstable: true], 
+                        [threshold: 10, type: 'TOTAL', unstable: false]
+                    ]
+        
+                recordIssues tools: [pyLint(name: 'Bandit', pattern: 'bandit.out')],
+                    qualityGates: [
+                        [threshold: 2, type: 'TOTAL', unstable: true], 
+                        [threshold: 4, type: 'TOTAL', unstable: false]
+                    ]
+            }
+            post {
+                always {
+                    echo 'Limpiando el workspace del Agente Estático...'
+                    cleanWs()
+                }
+            }
+        }
+
+        stage('Deploy') {
+            agent any // Vuelve al nodo master para usar AWS SAM
+            steps {
+                //Recupera el código fuente del stash, ya que el espacio de trabajo local fue limpiado previamente
+                unstash 'codigo-fuente'
+
+                // Registro de diagnóstico de entorno
+                sh '''
+                    echo "=============================="
+                    echo "Etapa: Deploy"
+                    echo "Nombre del Nodo en Jenkins: $NODE_NAME"
+                    echo "Usuario: $(whoami)"
+                    echo "Host: $(hostname)"
+                    echo "=============================="
+                '''
+
+                echo 'Iniciando el proceso de Despliegue en Staging con AWS SAM...'
+                sh '''
+                    sam build
+                    sam validate --region us-east-1
+                    sam deploy --config-env staging --resolve-s3 --no-confirm-changeset --no-fail-on-empty-changeset
+                '''
+            }
+        }
+
+        stage('Rest Test') {
+            agent { label 'api-test-agent' } // Agente exclusivo para pruebas de API
+            steps {
+                // Traemos el código para que pytest tenga los archivos de prueba
+                unstash 'codigo-fuente'
+                
+                // Inyectamos las credenciales de AWS de forma segura en este agente
+                // Para ello se ha creado en Jenkins en Global > aws-access-key-id y 
+                // se ha copiado en AWS Details ese campo, lo mismo para aws-secret-access-key
+                // y aws-session-token, para poder usar el aws cloudformation
+                withCredentials([
+                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY'),
+                    string(credentialsId: 'aws-session-token', variable: 'AWS_SESSION_TOKEN')
+                ]) {
+                    sh '''
+                        echo "=============================="
+                        echo "Etapa: Rest Test"
+                        echo "Nombre del Nodo en Jenkins: $NODE_NAME"
+                        echo "Usuario: $(whoami)"
+                        echo "Host: $(hostname)"
+                        echo "=============================="
+
+                        # Ahora el comando tiene permisos gracias a las variables de entorno inyectadas
+                        API_URL=$(aws cloudformation describe-stacks \
+                            --stack-name todo-list-aws-staging \
+                            --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
+                            --region us-east-1 \
+                            --output text)
+
+                        echo "La URL recuperada desde el agente es: ${API_URL}"
+
+                        # Lanzamos Pytest usando la URL obtenida en caliente de AWS
+                        BASE_URL=${API_URL} python3 -m pytest test/integration/todoApiTest.py -v
+                    '''
+                }
+            }
+            post {
+                always {
+                    echo 'Limpiando el workspace del Agente de Pruebas API...'
+                    cleanWs()
+                }
+            }
+        }
+
+        stage('Promote') {
+            agent any
+            steps {
+                git branch: 'develop', url: 'https://github.com/santt3131/devops_caso1.4_aws.git'
+
+                // Registro de diagnóstico de entorno
+                sh '''
+                    echo "=============================="
+                    echo "Etapa: Promote (Merge)"
+                    echo "Nombre del Nodo en Jenkins: $NODE_NAME"
+                    echo "Usuario: $(whoami)"
+                    echo "Host: $(hostname)"
+                    echo "=============================="
+                '''
+
+                echo 'Subiendo el código a Producción (Merge develop -> master)...'
+                withCredentials([usernamePassword(credentialsId: 'github-token', 
+                                                 passwordVariable: 'GIT_PASSWORD', 
+                                                 usernameVariable: 'GIT_USERNAME')]) {
+
+                    script {
+                        def jenkinsfileMasterOriginal = ""
+
+                        // Jenkins crea y se sitúa en una carpeta temporal aislada en el disco
+                        dir('temporal_master_respaldo') {
+                            git branch: 'master', url: 'https://github.com/santt3131/devops_caso1.4_aws.git'
+                            
+                            // Jenkins lee el Jenkinsfile original de producción mediante su función nativa
+                            jenkinsfileMasterOriginal = readFile 'JENKINSFILE_AGENTES'
+                        }
+                        
+                        // Al salir del bloque dir(), Jenkins nos regresa automáticamente 
+                        // al espacio de trabajo original donde está la rama 'develop'
+
+                        // 1. FUSIÓN DEL CÓDIGO FUENTE EN LINUX
+                        sh '''
+                            git config user.email "jenkins_demo_aws@gmail.com"
+                            git config user.name "Jenkins CI"
+                            git fetch origin
+                            
+                            git checkout master
+                            git reset --hard origin/master
+                            # Fusiona develop, pero si hay conflicto, gana master automáticamente
+                            git merge origin/develop -X ours --no-edit
+                        '''
+
+                        // 2. RESTAURACIÓN DEL ARCHIVO DESDE JENKINS
+                        // Machacamos el archivo modificado con el texto original que salvamos en la variable
+                        writeFile file: 'JENKINSFILE_AGENTES', text: jenkinsfileMasterOriginal
+
+                        // 3. ENVÍO FINAL SEGURO A GITHUB
+                        sh """
+                            git add JENKINSFILE_AGENTES
+                            
+                            # Si la fusión modificó el archivo, creamos un nuevo commit normal.
+                            # El "|| true" evita que el pipeline falle si no hubo cambios reales que commitear.
+                            git commit -m "Jenkins: Restaurando Jenkinsfile original de master" || true
+                            
+                            # Inyección segura de credenciales para el push
+                            GIT_URL=\$(git remote get-url origin | sed "s/https:\\/\\//https:\\/\\/${GIT_USERNAME}:${GIT_PASSWORD}@/")
+                            
+                            # Push estándar sin banderas de fuerza
+                            git push "\${GIT_URL}" master
+                        """
+                        
+                        echo "¡Promoción exitosa! Jenkins ha garantizado que predomine el Jenkinsfile de master."
+                    }
+                }
+            }
+            post {
+                success {
+                    echo 'Limpieza final tras la promoción exitosa...'
+                    cleanWs()
+                }
+            }
+        }
+    }
+}
