@@ -139,10 +139,15 @@ pipeline {
                         // 3. ENVÍO FINAL SEGURO A GITHUB
                         sh """
                             git add JENKINSFILE
-                            git commit --amend --no-edit || git commit -m "Merge develop into master (Jenkinsfile protegido por Jenkins)"
+                            
+                            # Si la fusión modificó el archivo, creamos un nuevo commit normal.
+                            # El "|| true" evita que el pipeline falle si no hubo cambios reales que commitear.
+                            git commit -m "Jenkins: Restaurando Jenkinsfile original de master" || true
                             
                             # Inyección segura de credenciales para el push
                             GIT_URL=\$(git remote get-url origin | sed "s/https:\\/\\//https:\\/\\/${GIT_USERNAME}:${GIT_PASSWORD}@/")
+                            
+                            # Push estándar sin banderas de fuerza
                             git push "\${GIT_URL}" master
                         """
                         
