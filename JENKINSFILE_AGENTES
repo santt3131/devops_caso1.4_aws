@@ -35,9 +35,6 @@ pipeline {
         stage('Deploy') {
             agent any // Vuelve al nodo master para usar AWS SAM
             steps {
-                //Lo traigo aquí para asegurar que el código fuente esté en este workspace específico
-                unstash 'codigo-produccion'
-
 
                 //Descarga el samconfig.toml correspondiente dinámicamente según la rama
                 sh "curl -sL https://raw.githubusercontent.com/santt3131/todo-list-aws-config/production/samconfig.toml -o samconfig.toml"
