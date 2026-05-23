@@ -1,5 +1,9 @@
 pipeline {
     agent none // Deshabilita el agente global para forzar la separación por etapas
+    //Esto le prohíbe a Jenkins clonar automáticamente en CUALQUIER agente
+    options {
+        skipDefaultCheckout(true)
+    }
 
     stages {
         stage('Get Code') {
@@ -30,9 +34,6 @@ pipeline {
         stage('Static Test') {
             agent { label 'static-analysis-agent' } // Agente exclusivo para pruebas estáticas
             
-            //Evita el clonado automático invisible de Jenkins en este agente
-            options { skipDefaultCheckout(true) }
-
             steps {
                 // Traemos el código al espacio de trabajo de este agente
                 unstash 'codigo-fuente'
