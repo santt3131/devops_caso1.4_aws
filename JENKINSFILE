@@ -19,13 +19,9 @@ pipeline {
             echo 'Iniciando el proceso de Despliegue en Producción con AWS SAM...'
             
 
-            script {
-                // DETECCIÓN AUTOMÁTICA: Si la rama es master, usa entorno production. Si no, staging.
-                def envName = (env.GIT_BRANCH && env.GIT_BRANCH.contains('master')) ? 'production' : 'staging'
-                echo "Entorno detectado para el despliegue: ${envName}"
-                //Descarga el samconfig.toml correspondiente dinámicamente según la rama
-                sh "curl -sL https://raw.githubusercontent.com/santt3131/todo-list-aws-config/${envName}/samconfig.toml -o samconfig.toml"
-           }
+            // Descarga el archivo de configuración samconfig.toml específico para producción desde el repositorio
+            sh "curl -sL https://raw.githubusercontent.com/santt3131/todo-list-aws-config/production/samconfig.toml -o samconfig.toml"
+           
            
             // Ejecución secuencial de comandos SAM automatizados y sin confirmaciones manuales
             sh '''
