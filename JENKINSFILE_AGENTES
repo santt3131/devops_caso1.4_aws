@@ -178,10 +178,12 @@ pipeline {
                         sh '''
                             git config user.email "jenkins_demo_aws@gmail.com"
                             git config user.name "Jenkins CI"
-                            git fetch origin
+                            git fetch origin master
                             
-                            git checkout master
+                            # Creamos el puente local vinculándolo directamente al origen
+                            git checkout -B master origin/master
                             git reset --hard origin/master
+
                             # Fusiona develop, pero si hay conflicto, gana master automáticamente
                             git merge origin/develop -X ours --no-edit
                         '''
