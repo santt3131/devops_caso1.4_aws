@@ -1,0 +1,119 @@
+pipeline {
+    agent none // Deshabilita el agente global para forzar la separación estricta por nodos y agentes
+
+    stages {
+        // 1. Descarga el código fuente exclusivamente desde la rama master
+        stage('Get Code') {
+            agent any // Se ejecuta en el nodo master por defecto
+            steps {
+                // Registro de diagnóstico de entorno
+                sh '''
+                    echo "=============================="
+                    echo "Etapa: Get Code"
+                    echo "Nombre del Nodo en Jenkins: $NODE_NAME"
+                    echo "Usuario: $(whoami)"
+                    echo "Host: $(hostname)"
+                    echo "=============================="
+                '''
+
+                checkout([$class: 'GitSCM', 
+                    branches: [[name: '*/master']], 
+                    extensions: [], 
+                    userRemoteConfigs: [[url: 'https://github.com/santt3131/devops_caso1.4_aws.git']]
+                ])
+
+                // Guardamos el código en el baúl temporal de Jenkins
+                stash name: 'codigo-produccion', includes: '**/*'
+            }
+        }
+
+
+        stage('Deploy') {
+            agent any // Vuelve al nodo master para usar AWS SAM
+            steps {
+
+                sh '''
+                    echo "=============================="
+                    echo "Etapa: Deploy (Producción)"
+                    echo "Nombre del Nodo en Jenkins: $NODE_NAME"
+                    echo "=============================="
+                '''
+                echo 'Iniciando el proceso de Despliegue en Producción con AWS SAM...'
+
+                // Ejecución secuencial de comandos SAM automatizados y sin confirmaciones manuales
+                sh '''
+                    # 1. Construye las funciones Lambda y gestiona sus dependencias de forma aislada
+                    sam build
+
+                    # 2. Valida la estructura y sintaxis de la plantilla template.yaml en la región especificada
+                    sam validate --region us-east-1
+
+                    # 3.Despliega en AWS usando la configuración de Staging del archivo samconfig.toml
+                    # --resolve-s3: Crea automáticamente el bucket de S3
+                    # --no-confirm-changeset: Quita la pregunta manual de confirmación para que Jenkins corra solo
+                    # --no-fail-on-empty-changeset: Si ejecutas el pipeline dos veces seguidas sin cambiar código 
+                    # o infraestructura, evita que AWS lance un error por "no haber cambios".
+                    # con la diferencia que ahora es production
+                    sam deploy --config-env production --resolve-s3 --no-confirm-changeset --no-fail-on-empty-changeset
+                '''
+            }
+            post {
+                success {
+                    echo 'Limpieza del workspace nodo principal.'
+                    cleanWs()
+                }
+            }
+        }
+
+        stage('Rest Test') {
+            agent { label 'api-test-agent' } // Se asignó el agente
+            steps {
+                unstash 'codigo-produccion' // Trae el código descargado en la primera etapa
+
+                // Inyectamos las credenciales de AWS de forma segura en este agente
+                // Para ello se ha creado en Jenkins en Global > aws-access-key-id y 
+                // se ha copiado en AWS Details ese campo, lo mismo para aws-secret-access-key
+                // y aws-session-token, para poder usar el aws cloudformation
+                withCredentials([
+                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY'),
+                    string(credentialsId: 'aws-session-token', variable: 'AWS_SESSION_TOKEN')
+                ]) {
+                sh '''
+                echo "=============================="
+                echo "Etapa: Rest Test"
+                echo "Nombre del Nodo en Jenkins: $NODE_NAME"
+                echo "Usuario: $(whoami)"
+                echo "Host: $(hostname)"
+                echo "=============================="
+                '''
+                echo 'Iniciando Pruebas de Integración de solo lectura en Producción...'
+
+                sh '''
+                    # 1. Capturamos dinámicamente la URL del API Gateway del entorno de Producción
+                    API_URL=$(aws cloudformation describe-stacks \
+                        --stack-name todo-list-aws-production \
+                        --query "Stacks[0].Outputs[?OutputKey=='BaseUrlApi'].OutputValue" \
+                        --region us-east-1 \
+                        --output text)
+
+                    # Mostramos la URL en el log de Jenkins para verificar
+                    echo "La URL de la API de Producción detectada es: ${API_URL}"
+
+                    # 2. Lanzamos Pytest apuntando únicamente a los dos tests de lectura requeridos
+                    # Usamos -k "test_api_listtodos or test_api_gettodo" para aislar exactamente estas funciones
+                    # Las pruebas de alteración de datos (add, update, delete) serán totalmente omitidas
+                    BASE_URL=${API_URL} python3 -m pytest test/integration/todoApiTest.py -v -k "test_api_listtodos or test_api_gettodo"
+                '''
+                 }
+            }
+            post {
+                always {
+                    echo 'Limpiando el workspace del Agente de Pruebas API...'
+                    cleanWs()
+                }
+            }
+        }
+
+    }
+}
