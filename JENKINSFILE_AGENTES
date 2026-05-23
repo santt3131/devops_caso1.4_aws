@@ -1,6 +1,10 @@
 pipeline {
     agent none // Deshabilita el agente global para forzar la separación estricta por nodos y agentes
-
+    //Esto le prohíbe a Jenkins clonar automáticamente en CUALQUIER agente
+    options {
+        skipDefaultCheckout(true)
+    }
+    
     stages {
         // 1. Descarga el código fuente exclusivamente desde la rama master
         stage('Get Code') {
