@@ -159,13 +159,16 @@ pipeline {
 
                     script {
                         def jenkinsfileMasterOriginal = ""
+                        def jenkinsfileAgentesMasterOriginal = ""
 
                         // Jenkins crea y se sitúa en una carpeta temporal aislada en el disco
                         dir('temporal_master_respaldo') {
                             git branch: 'master', url: 'https://github.com/santt3131/devops_caso1.4_aws.git'
                             
                             // Jenkins lee el Jenkinsfile original de producción mediante su función nativa
-                            jenkinsfileMasterOriginal = readFile 'JENKINSFILE_AGENTES'
+                            // Guardamos en memoria el contenido original de ambos archivos
+                            jenkinsfileMasterOriginal = readFile 'JENKINSFILE'
+                            jenkinsfileAgentesMasterOriginal = readFile 'JENKINSFILE_AGENTES'
                         }
                         
                         // Al salir del bloque dir(), Jenkins nos regresa automáticamente 
@@ -185,15 +188,16 @@ pipeline {
 
                         // 2. RESTAURACIÓN DEL ARCHIVO DESDE JENKINS
                         // Machacamos el archivo modificado con el texto original que salvamos en la variable
-                        writeFile file: 'JENKINSFILE_AGENTES', text: jenkinsfileMasterOriginal
+                        writeFile file: 'JENKINSFILE', text: jenkinsfileMasterOriginal
+                        writeFile file: 'JENKINSFILE_AGENTES', text: jenkinsfileAgentesMasterOriginal
 
                         // 3. ENVÍO FINAL SEGURO A GITHUB
                         sh """
-                            git add JENKINSFILE_AGENTES
+                            git add JENKINSFILE JENKINSFILE_AGENTES
                             
                             # Si la fusión modificó el archivo, creamos un nuevo commit normal.
                             # El "|| true" evita que el pipeline falle si no hubo cambios reales que commitear.
-                            git commit -m "Jenkins: Restaurando Jenkinsfile original de master" || true
+                            git commit -m "Jenkins: Restaurando JENKINSFILE y JENKINSFILE_AGENTES originales de master" || true
                             
                             # Inyección segura de credenciales para el push
                             GIT_URL=\$(git remote get-url origin | sed "s/https:\\/\\//https:\\/\\/${GIT_USERNAME}:${GIT_PASSWORD}@/")
@@ -202,7 +206,7 @@ pipeline {
                             git push "\${GIT_URL}" master
                         """
                         
-                        echo "¡Promoción exitosa! Jenkins ha garantizado que predomine el Jenkinsfile de master."
+                        echo "¡Promoción exitosa! Se han protegido JENKINSFILE y JENKINSFILE_AGENTES simultáneamente."
                     }
                 }
             }
