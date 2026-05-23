@@ -56,6 +56,15 @@ pipeline {
         steps {
             echo 'Iniciando el proceso de Despliegue en Staging con AWS SAM...'
 
+            script {
+                // DETECCIÓN AUTOMÁTICA: Si la rama es master, usa entorno production. Si no, staging.
+                def envName = (env.BRANCH_NAME == 'master') ? 'production' : 'staging'
+                echo "Entorno detectado para el despliegue: ${envName}"
+                //Descarga el samconfig.toml correspondiente dinámicamente según la rama
+                sh "curl -sL https://raw.githubusercontent.com/santt3131/todo-list-aws-config/${envName}/samconfig.toml -o samconfig.toml"
+           }
+
+
             // Ejecución secuencial de comandos SAM automatizados y sin confirmaciones manuales
             sh '''
                 # 1. Construimos las funciones Lambda y gestiona sus dependencias de forma aislada
@@ -101,12 +110,18 @@ pipeline {
 
     stage('Promote') {
             steps {
-                echo 'Subiendo el código a Producción (Merge develop -> master con protección de Jenkinsfile)...'
+                echo 'Subiendo el código a Producción (Merge develop -> master)...'
                 
+                // REQUISITOS PREVIOS DE AUTENTICACIÓN:
+                // 1. En GitHub: Settings -> Developer Settings -> Personal access tokens (classic) 
+                // -> Crear Token marcando la casilla 'repo'.
+                // 2. En Jenkins: Administrar Jenkins -> Credentials -> Global 
+                // ->Add Credentials (Username with password).
+                // El usuario 'santt3131', el Token como contraseña y el ID 'github-token'.
                 withCredentials([usernamePassword(credentialsId: 'github-token', 
                                                  passwordVariable: 'GIT_PASSWORD', 
                                                  usernameVariable: 'GIT_USERNAME')]) {
-                    script {
+                                    script {
                         // Declaramos variables para guardar el contenido de ambos archivos de Jenkins en master
                         def jenkinsfileMasterOriginal = ""
                         def jenkinsfileAgentesMasterOriginal = ""
@@ -162,7 +177,7 @@ pipeline {
                     }
                 }
             }
-    }
+        }
     
     }
 
