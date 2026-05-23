@@ -4,7 +4,7 @@ pipeline {
     options {
         skipDefaultCheckout(true)
     }
-    
+
     stages {
         // 1. Descarga el código fuente exclusivamente desde la rama master
         stage('Get Code') {
@@ -35,6 +35,9 @@ pipeline {
         stage('Deploy') {
             agent any // Vuelve al nodo master para usar AWS SAM
             steps {
+                //Lo traigo aquí para asegurar que el código fuente esté en este workspace específico
+                unstash 'codigo-produccion'
+
                 script {
                     // DETECCIÓN AUTOMÁTICA: Si la rama es master, usa entorno production. Si no, staging.
                     def envName = (env.GIT_BRANCH && env.GIT_BRANCH.contains('master')) ? 'production' : 'staging'
