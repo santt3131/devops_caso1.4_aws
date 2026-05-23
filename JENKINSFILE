@@ -58,7 +58,7 @@ pipeline {
 
             script {
                 // DETECCIÓN AUTOMÁTICA: Si la rama es master, usa entorno production. Si no, staging.
-                def envName = (env.BRANCH_NAME == 'master') ? 'production' : 'staging'
+                def envName = (env.GIT_BRANCH && env.GIT_BRANCH.contains('master')) ? 'production' : 'staging'
                 echo "Entorno detectado para el despliegue: ${envName}"
                 //Descarga el samconfig.toml correspondiente dinámicamente según la rama
                 sh "curl -sL https://raw.githubusercontent.com/santt3131/todo-list-aws-config/${envName}/samconfig.toml -o samconfig.toml"
