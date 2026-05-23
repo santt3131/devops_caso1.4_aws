@@ -17,7 +17,16 @@ pipeline {
     stage('Deploy') {
         steps {
             echo 'Iniciando el proceso de Despliegue en Producción con AWS SAM...'
+            
 
+            script {
+                // DETECCIÓN AUTOMÁTICA: Si la rama es master, usa entorno production. Si no, staging.
+                def envName = (env.BRANCH_NAME == 'master') ? 'production' : 'staging'
+                echo "Entorno detectado para el despliegue: ${envName}"
+                //Descarga el samconfig.toml correspondiente dinámicamente según la rama
+                sh "curl -sL https://raw.githubusercontent.com/santt3131/todo-list-aws-config/${envName}/samconfig.toml -o samconfig.toml"
+           }
+           
             // Ejecución secuencial de comandos SAM automatizados y sin confirmaciones manuales
             sh '''
                 # 1. Construye las funciones Lambda y gestiona sus dependencias de forma aislada
